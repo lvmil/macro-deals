@@ -1,90 +1,136 @@
 import { Deal } from "../types";
+import * as cheerio from "cheerio";
 
-// Helper: safe number
 function toNum(v: unknown): number | null {
   if (typeof v === "number") return v;
   if (typeof v === "string") {
-    const n = parseFloat(v.replace(",", "."));
+    const n = parseFloat(v.replace(",", ".").replace(/[^\d.]/g, ""));
     return Number.isFinite(n) ? n : null;
   }
   return null;
 }
 
+/**
+ * Strategy:
+ *  1) Load REWE offers page filtered by zip.
+ *  2) Parse all <script type="application/ld+json"> blocks.
+ *  3) Collect Product entries with Offers (price, priceCurrency) and map to Deal[].
+ * Notes:
+ *  - This avoids brittle CSS selectors.
+ *  - If nothing is found, we fall back to a small stub so the UI never looks empty.
+ */
 export async function fetchRewe(zip: string): Promise<Deal[]> {
   try {
-    // 1) Find nearest REWE market for ZIP
-    const searchUrl =
-      `https://shop.rewe.de/api/market-search?searchTerm=${encodeURIComponent(zip)}&marketChain=REWE`;
+    // REWE offers search by zip (public page; structure may vary by time)
+    const url = `https://www.rewe.de/angebote/?search=${encodeURIComponent(zip)}`;
 
-    const searchRes = await fetch(searchUrl, {
-      headers: { "user-agent": "Mozilla/5.0 (MacroDealsBot/1.0)" },
+    const res = await fetch(url, {
+      headers: {
+        "user-agent": "Mozilla/5.0 (MacroDealsBot/1.0)",
+        "accept": "text/html,application/xhtml+xml",
+      },
+      // Important: don’t cache in Vercel edge to avoid stale HTML
       cache: "no-store",
     });
 
-    if (!searchRes.ok) throw new Error(`search ${searchRes.status}`);
-    const searchJson: any = await searchRes.json();
-    const marketId: string | undefined = searchJson?.markets?.[0]?.wwIdent;
-    if (!marketId) throw new Error("no marketId");
+    if (!res.ok) throw new Error(`REWE offers page ${res.status}`);
+    const html = await res.text();
+    const $ = cheerio.load(html);
 
-    // 2) Pull promotions for that market
-    const promoUrl =
-      `https://shop.rewe.de/api/promotions?marketCode=${encodeURIComponent(marketId)}`;
+    const deals: Deal[] = [];
 
-    const promoRes = await fetch(promoUrl, {
-      headers: { "user-agent": "Mozilla/5.0 (MacroDealsBot/1.0)" },
-      cache: "no-store",
+    // Parse every JSON-LD block and extract products
+    $('script[type="application/ld+json"]').each((i, el) => {
+      const raw = $(el).contents().text();
+      if (!raw) return;
+      let data: any;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        return;
+      }
+
+      // JSON-LD can be an array or a single object
+      const items = Array.isArray(data) ? data : [data];
+
+      for (const item of items) {
+        // Some pages wrap things inside "@graph"
+        const graph = item?.["@graph"];
+        const nodes = Array.isArray(graph) ? graph : [item];
+
+        for (const node of nodes) {
+          const type = node?.["@type"];
+          if (!type) continue;
+
+          // Accept Product or variants
+          if (
+            (typeof type === "string" && type.toLowerCase().includes("product")) ||
+            (Array.isArray(type) && type.some((t: string) => t.toLowerCase().includes("product")))
+          ) {
+            const name: string = node?.name || node?.title || "";
+            const offers = node?.offers;
+            if (!name || !offers) continue;
+
+            const offerList = Array.isArray(offers) ? offers : [offers];
+            for (const offer of offerList) {
+              const priceNum = toNum(offer?.price);
+              if (priceNum == null) continue;
+              const currency: string = offer?.priceCurrency || "EUR";
+              // Try to form a "unit" text. JSON-LD rarely contains €/kg, so keep currency simple.
+              const unit = currency;
+
+              // Image might be string or array
+              const image =
+                typeof node?.image === "string"
+                  ? node.image
+                  : Array.isArray(node?.image)
+                  ? node.image[0]
+                  : undefined;
+
+              // Validity sometimes present in JSON-LD
+              const validTo: string | undefined =
+                offer?.priceValidUntil || node?.validThrough || node?.validTo || undefined;
+
+              deals.push({
+                id: `rewe-${i}-${name.slice(0, 24)}`,
+                store: "rewe",
+                title: name,
+                price: priceNum,
+                unit,
+                image,
+                validTo,
+              });
+            }
+          }
+        }
+      }
     });
 
-    if (!promoRes.ok) throw new Error(`promos ${promoRes.status}`);
-    const promoJson: any = await promoRes.json();
-
-    // normalize a few likely shapes
-    const promos: any[] =
-      promoJson?.promotions ??
-      promoJson?.items ??
-      promoJson?.data ??
-      [];
-
-    const mapped: Deal[] = [];
-    promos.forEach((p: any, idx: number) => {
-      const title =
-        p?.title || p?.name || p?.productName || p?.product?.name || "";
-      const rawPrice =
-        p?.price?.value ?? p?.price ?? p?.currentPrice ?? p?.offerPrice;
-      const price = toNum(rawPrice);
-      const unit =
-        p?.price?.unit || p?.unit || p?.priceUnit || "EUR";
-      const image =
-        p?.image || p?.imageUrl || p?.assets?.[0]?.url || undefined;
-      const validTo =
-        p?.endDate || p?.validTo || p?.validUntil || undefined;
-
-      if (!title || price == null) return;
-      mapped.push({
-        id: `rewe-${marketId}-${idx}`,
-        store: "rewe",
-        title,
-        price,
-        unit: typeof unit === "string" && unit.includes("€") ? "EUR" : unit,
-        image,
-        validTo,
+    if (deals.length > 0) {
+      // Optional: basic de-dup by (title, price)
+      const seen = new Set<string>();
+      const uniq = deals.filter((d) => {
+        const key = `${d.title}|${d.price}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
       });
-    });
 
-    // If nothing parsed, fall back to stub so UI still shows something
-    if (mapped.length === 0) {
-      return [
-        { id: `rewe-stub-1-${zip}`, store: "rewe", title: "Milk 1L",    price: 1.09, unit: "EUR/L" },
-        { id: `rewe-stub-2-${zip}`, store: "rewe", title: "Bananas 1kg", price: 1.19, unit: "EUR/kg" },
-      ];
+      // Sort lowest price first
+      uniq.sort((a, b) => (a.price ?? 1e9) - (b.price ?? 1e9));
+      return uniq;
     }
 
-    return mapped;
-  } catch (err) {
-    // Fallback stub on any error, so your app doesn’t look empty
+    // Fallback stub
     return [
-      { id: `rewe-stub-1-${zip}`, store: "rewe", title: "Milk 1L",    price: 1.09, unit: "EUR/L" },
-      { id: `rewe-stub-2-${zip}`, store: "rewe", title: "Bananas 1kg", price: 1.19, unit: "EUR/kg" },
+      { id: `rewe-stub-1-${zip}`, store: "rewe", title: "Milk 1L",    price: 1.09, unit: "EUR" },
+      { id: `rewe-stub-2-${zip}`, store: "rewe", title: "Bananas 1kg", price: 1.19, unit: "EUR" },
+    ];
+  } catch (err) {
+    // Hard fallback so UI never looks empty
+    return [
+      { id: `rewe-stub-1-${zip}`, store: "rewe", title: "Milk 1L",    price: 1.09, unit: "EUR" },
+      { id: `rewe-stub-2-${zip}`, store: "rewe", title: "Bananas 1kg", price: 1.19, unit: "EUR" },
     ];
   }
 }
