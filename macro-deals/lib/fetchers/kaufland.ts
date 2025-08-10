@@ -13,6 +13,7 @@ function toNum(v: unknown): number | null {
 
 async function scrape(url: string): Promise<Deal[]> {
   const html = await fetchHtml(url);
+  if (!html) return [];
   const root = parse(html);
   const scripts = root.querySelectorAll('script[type="application/ld+json"]');
 
