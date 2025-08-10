@@ -11,7 +11,7 @@ export async function fetchHtml(url: string, headers: Record<string,string> = {}
 
   // 12s timeout so we don't hang forever
   const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), 12_000);
+  const t = setTimeout(() => controller.abort(), 25_000);
 
   try {
     const res = await fetch(target, {
