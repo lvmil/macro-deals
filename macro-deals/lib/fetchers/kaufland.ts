@@ -1,5 +1,6 @@
 import { Deal } from "../types";
 import { parse } from "node-html-parser";
+import { fetchHtml } from "../http";
 
 function toNum(v: unknown): number | null {
   if (typeof v === "number") return v;
@@ -11,19 +12,7 @@ function toNum(v: unknown): number | null {
 }
 
 async function scrape(url: string): Promise<Deal[]> {
-  const res = await fetch(url, {
-    headers: {
-      "user-agent": "Mozilla/5.0 (MacroDealsBot/1.0)",
-      "accept": "text/html,application/xhtml+xml",
-      "accept-language": "de-DE,de;q=0.9,en;q=0.8",
-      // Pretend we accepted consent, which can gate content
-      "cookie": "cookie_consent=true; consent=true; kl_consent=true"
-    },
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const html = await res.text();
-
+  const html = await fetchHtml(url);
   const root = parse(html);
   const scripts = root.querySelectorAll('script[type="application/ld+json"]');
 
@@ -58,11 +47,8 @@ async function scrape(url: string): Promise<Deal[]> {
           const currency: string = offer?.priceCurrency || "EUR";
 
           const img =
-            typeof node?.image === "string"
-              ? node.image
-              : Array.isArray(node?.image)
-              ? node.image[0]
-              : undefined;
+            typeof node?.image === "string" ? node.image
+            : Array.isArray(node?.image) ? node.image[0] : undefined;
 
           const validTo: string | undefined =
             offer?.priceValidUntil || node?.validThrough || node?.validTo || undefined;
@@ -81,6 +67,7 @@ async function scrape(url: string): Promise<Deal[]> {
     }
   }
 
+  // dedupe + sort
   const seen = new Set<string>();
   const uniq = deals.filter(d => {
     const k = `${d.title}|${d.price}`;
@@ -96,16 +83,14 @@ export async function fetchKaufland(zip: string): Promise<Deal[]> {
   const urls = [
     `https://www.kaufland.de/angebote/aktuell.html?search=${encodeURIComponent(zip)}`,
     `https://www.kaufland.de/angebote/aktuell.html`,
-    `https://www.kaufland.de/angebote/prospekt.html`
+    `https://www.kaufland.de/angebote/prospekt.html`,
   ];
 
   for (const url of urls) {
     try {
       const out = await scrape(url);
       if (out.length) return out;
-    } catch {
-      // try next
-    }
+    } catch {}
   }
 
   return [
