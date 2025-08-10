@@ -15,6 +15,9 @@ async function scrape(url: string): Promise<Deal[]> {
     headers: {
       "user-agent": "Mozilla/5.0 (MacroDealsBot/1.0)",
       "accept": "text/html,application/xhtml+xml",
+      "accept-language": "de-DE,de;q=0.9,en;q=0.8",
+      // Pretend we accepted consent, which can gate content
+      "cookie": "cookie_consent=true; consent=true; kl_consent=true"
     },
     cache: "no-store",
   });
@@ -30,11 +33,7 @@ async function scrape(url: string): Promise<Deal[]> {
     if (!raw) continue;
 
     let data: any;
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      continue;
-    }
+    try { data = JSON.parse(raw); } catch { continue; }
     const items = Array.isArray(data) ? data : [data];
 
     for (const item of items) {
@@ -82,9 +81,8 @@ async function scrape(url: string): Promise<Deal[]> {
     }
   }
 
-  // de-dup & sort
   const seen = new Set<string>();
-  const uniq = deals.filter((d) => {
+  const uniq = deals.filter(d => {
     const k = `${d.title}|${d.price}`;
     if (seen.has(k)) return false;
     seen.add(k);
@@ -95,10 +93,10 @@ async function scrape(url: string): Promise<Deal[]> {
 }
 
 export async function fetchKaufland(zip: string): Promise<Deal[]> {
-  // Try a ZIP-targeted and a generic offers page
   const urls = [
     `https://www.kaufland.de/angebote/aktuell.html?search=${encodeURIComponent(zip)}`,
     `https://www.kaufland.de/angebote/aktuell.html`,
+    `https://www.kaufland.de/angebote/prospekt.html`
   ];
 
   for (const url of urls) {
@@ -106,13 +104,12 @@ export async function fetchKaufland(zip: string): Promise<Deal[]> {
       const out = await scrape(url);
       if (out.length) return out;
     } catch {
-      // keep trying
+      // try next
     }
   }
 
-  // Fallback stub
   return [
     { id: `kaufland-stub-1-${zip}`, store: "kaufland", title: "K-Butter 250g", price: 1.79, unit: "EUR" },
-    { id: `kaufland-stub-2-${zip}`, store: "kaufland", title: "Äpfel 1kg",     price: 1.99, unit: "EUR" },
+    { id: `kaufland-stub-2-${zip}`, store: "kaufland", title: "Apfel 1kg",     price: 1.99, unit: "EUR" }
   ];
 }
