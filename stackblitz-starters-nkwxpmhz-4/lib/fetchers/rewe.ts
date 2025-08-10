@@ -1,6 +1,10 @@
-import { Deal } from "../types";
+import { Deal } from "@/lib/types";
 
 export async function fetchRewe(zip: string): Promise<Deal[]> {
+  return [
+    { id: "r1", store: "Rewe", title: "Milk 1L", price: "€1.09", unit: "1L", image: "", validTo: "2025-08-17" }
+  ];
+}
   try {
     // REWE flyer API — returns offers for a given ZIP
     const url = `https://shop.rewe.de/api/market-search?searchTerm=${zip}&marketChain=REWE`;
