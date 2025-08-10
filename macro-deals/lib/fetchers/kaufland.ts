@@ -80,6 +80,11 @@ async function scrape(url: string): Promise<Deal[]> {
 }
 
 export async function fetchKaufland(zip: string): Promise<Deal[]> {
+  // If proxy is enabled but missing URL, fail fast so we see it in logs
+  if (process.env.USE_PROXY === "1" && !process.env.PROXY_URL) {
+    throw new Error("USE_PROXY=1 but PROXY_URL not set");
+  }
+
   const urls = [
     `https://www.kaufland.de/angebote/aktuell.html?search=${encodeURIComponent(zip)}`,
     `https://www.kaufland.de/angebote/aktuell.html`,
@@ -90,9 +95,12 @@ export async function fetchKaufland(zip: string): Promise<Deal[]> {
     try {
       const out = await scrape(url);
       if (out.length) return out;
-    } catch {}
+    } catch (e) {
+      console.error("[kaufland] scrape error", url, e);
+    }
   }
 
+  // stub fallback
   return [
     { id: `kaufland-stub-1-${zip}`, store: "kaufland", title: "K-Butter 250g", price: 1.79, unit: "EUR" },
     { id: `kaufland-stub-2-${zip}`, store: "kaufland", title: "Apfel 1kg",     price: 1.99, unit: "EUR" }
