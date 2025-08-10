@@ -1,5 +1,5 @@
 import { Deal } from '../types';
-import * as cheerio from 'cheerio';
+import { parse } from 'node-html-parser';
 
 function toNum(v: unknown): number | null {
   if (typeof v === 'number') return v;
@@ -67,49 +67,71 @@ async function tryHtml(zip: string): Promise<Deal[]> {
     });
     if (!res.ok) throw new Error(String(res.status));
     const html = await res.text();
-    const $ = cheerio.load(html);
+
+    const root = parse(html);
+    const scripts = root.querySelectorAll('script[type="application/ld+json"]');
+
     const deals: Deal[] = [];
-    $('script[type="application/ld+json"]').each((i, el) => {
-      const raw = $(el).contents().text();
-      if (!raw) return;
+    for (const s of scripts) {
+      const raw = s.text?.trim();
+      if (!raw) continue;
+
       let data: any;
-      try { data = JSON.parse(raw); } catch { return; }
+      try { data = JSON.parse(raw); } catch { continue; }
       const items = Array.isArray(data) ? data : [data];
+
       for (const item of items) {
         const graph = item?.['@graph'];
         const nodes = Array.isArray(graph) ? graph : [item];
+
         for (const node of nodes) {
           const type = node?.['@type'];
-          const isProduct = (typeof type === 'string' && type.toLowerCase().includes('product')) ||
+          const isProduct =
+            (typeof type === 'string' && type.toLowerCase().includes('product')) ||
             (Array.isArray(type) && type.some((t: string) => t.toLowerCase().includes('product')));
           if (!isProduct) continue;
+
           const name: string = node?.name || node?.title || '';
           const offers = node?.offers;
           if (!name || !offers) continue;
+
           const list = Array.isArray(offers) ? offers : [offers];
           for (const offer of list) {
             const priceNum = toNum(offer?.price);
             if (priceNum == null) continue;
             const currency: string = offer?.priceCurrency || 'EUR';
-            const image =
-              typeof node?.image === 'string' ? node.image :
-              Array.isArray(node?.image) ? node.image[0] : undefined;
+
+            const img = typeof node?.image === 'string'
+              ? node.image
+              : Array.isArray(node?.image) ? node.image[0] : undefined;
+
             const validTo: string | undefined =
               offer?.priceValidUntil || node?.validThrough || node?.validTo || undefined;
+
             deals.push({
-              id: `rewe-html-${i}-${name.slice(0,24)}`,
+              id: `rewe-html-${name.slice(0, 24)}-${deals.length}`,
               store: 'rewe',
               title: name,
               price: priceNum,
               unit: currency,
-              image,
+              image: img,
               validTo,
             });
           }
         }
       }
+    }
+
+    // De-dup & sort
+    const seen = new Set<string>();
+    const uniq = deals.filter(d => {
+      const k = `${d.title}|${d.price}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
     });
-    return deals;
+    uniq.sort((a, b) => (a.price ?? 1e9) - (b.price ?? 1e9));
+    return uniq;
   } catch {
     return [];
   }
