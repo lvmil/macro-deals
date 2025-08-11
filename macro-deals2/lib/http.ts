@@ -18,10 +18,10 @@ async function doFetch(target: string, timeoutMs: number) {
         "user-agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
         "accept": "text/html,application/xhtml+xml",
-        "accept-language": "de-DE,de;q=0.9,en;q=0.8",
+        "accept-language": "de-DE,de;q=0.9,en;q=0.8"
       },
       cache: "no-store",
-      signal: controller.signal,
+      signal: controller.signal
     });
     const text = res.ok ? await res.text() : "";
     return { ok: res.ok, status: res.status, text };
@@ -37,7 +37,7 @@ export async function fetchHtml(url: string) {
   const base = process.env.PROXY_URL || "";
   const timeoutMs = 65_000;
 
-  // Try Proxy + Render
+  // 1) Proxy + Render
   if (useProxy && base) {
     const withRender = appendParam(base, "render=true");
     const target = `${withRender}${encodeURIComponent(url)}`;
@@ -46,7 +46,7 @@ export async function fetchHtml(url: string) {
     if (r1.ok && r1.text.length > 2000) return r1.text;
   }
 
-  // Try Proxy + NoRender
+  // 2) Proxy + No Render
   if (useProxy && base) {
     const noRender = appendParam(base, "render=false");
     const target = `${noRender}${encodeURIComponent(url)}`;
@@ -55,21 +55,22 @@ export async function fetchHtml(url: string) {
     if (r2.ok && r2.text.length > 2000) return r2.text;
   }
 
-  // Try direct (no proxy)
+  // 3) Direct
   {
     const r3 = await doFetch(url, 30000);
     console.log("[fetchHtml] try#3 direct:", r3.ok, r3.status, "| host:", (()=>{try{return new URL(url).host}catch{return "?"}})());
     if (r3.ok && r3.text.length > 2000) return r3.text;
   }
 
-  // Last resort: Playwright ONLY for Kaufland
-  if (/\\.kaufland\\.de$/i.test(new URL(url).host)) {
-    try {
+  // 4) Playwright (Kaufland only)
+  try {
+    const host = new URL(url).host;
+    if (/\.kaufland\.de$/i.test(host)) {
       const html = await getHtmlWithPlaywright(url);
-      console.log("[fetchHtml] try#4 playwright:", html.length);
+      console.log("[fetchHtml] try#4 playwright length:", html?.length || 0);
       if (html && html.length > 2000) return html;
-    } catch {}
-  }
+    }
+  } catch {}
 
   return "";
 }
