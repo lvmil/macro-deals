@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "cheerio": "^1.0.0-rc.12",
-    "css-select": "^5.2.2",
     "he": "^1.2.0",
     "next": "14.2.4",
     "node-fetch": "^3.3.2",
@@ -18,5 +17,8 @@
     "playwright": "^1.54.2",
     "react": "18.2.0",
     "react-dom": "18.2.0"
+  },
+  "overrides": {
+    "undici": "6.19.8"
   }
 }
