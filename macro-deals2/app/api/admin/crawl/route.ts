@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { setCache } from "../../../../lib/cache";
 import { fetchKaufland } from "../../../../lib/fetchers/kaufland";
+import { dbSetJSON } from "../../../../lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,11 +18,10 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "unsupported store" }, { status: 400 });
   }
 
-  try {
-    const deals = await fetchKaufland(zip);
-    setCache(`deals:${zip}:kaufland`, deals, 1000 * 60 * 60 * 6); // 6h cache
-    return NextResponse.json({ ok: true, store, zip, count: deals.length });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, store, zip, error: String(e) }, { status: 500 });
-  }
+  const deals = await fetchKaufland(zip);
+  // write normalized payload
+  const payload = { zip, store, deals, ts: Date.now() };
+  await dbSetJSON(`deals:${store}:${zip}`, payload, 60 * 60 * 6); // 6h TTL
+
+  return NextResponse.json({ ok: true, store, zip, count: deals.length });
 }
