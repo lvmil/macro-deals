@@ -1,3 +1,4 @@
+// macro-deals/lib/fetchers/kaufland.ts
 import { Deal } from "../types";
 import { parse } from "node-html-parser";
 import { fetchHtml } from "../http";
@@ -24,9 +25,13 @@ async function scrape(url: string): Promise<Deal[]> {
     if (!raw) continue;
 
     let data: any;
-    try { data = JSON.parse(raw); } catch { continue; }
-    const items = Array.isArray(data) ? data : [data];
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      continue;
+    }
 
+    const items = Array.isArray(data) ? data : [data];
     for (const item of items) {
       const graph = item?.["@graph"];
       const nodes = Array.isArray(graph) ? graph : [item];
@@ -69,6 +74,7 @@ async function scrape(url: string): Promise<Deal[]> {
     }
   }
 
+  // de-dup + sort by price
   const seen = new Set<string>();
   const uniq = deals.filter(d => {
     const k = `${d.title}|${d.price}`;
@@ -81,21 +87,28 @@ async function scrape(url: string): Promise<Deal[]> {
 }
 
 export async function fetchKaufland(zip: string): Promise<Deal[]> {
-  const urls = [
-    `https://www.kaufland.de/angebote/aktuell.html?search=${encodeURIComponent(zip)}`,
-    `https://www.kaufland.de/angebote/aktuell.html`,
-    `https://www.kaufland.de/angebote/prospekt.html`,
+  // DO NOT use ?search=ZIP here — it 404s via proxy rendering.
+  const candidates = [
+    "https://www.kaufland.de/angebote/aktuell.html",
+    "https://www.kaufland.de/angebote/prospekt.html",
+    "https://www.kaufland.de/angebote/"
   ];
 
-  for (const url of urls) {
+  for (const url of candidates) {
     try {
-      const out = await scrape(url);
-      if (out.length) return out;
+      let items = await scrape(url);
+      if (!items.length) {
+        // one short retry — some pages need a second render
+        await new Promise(r => setTimeout(r, 800));
+        items = await scrape(url);
+      }
+      if (items.length) return items;
     } catch (e) {
       console.error("[kaufland] scrape error", url, e);
     }
   }
 
+  // Fallback stub so the app still works
   return [
     { id: `kaufland-stub-1-${zip}`, store: "kaufland", title: "K-Butter 250g", price: 1.79, unit: "EUR" },
     { id: `kaufland-stub-2-${zip}`, store: "kaufland", title: "Apfel 1kg",     price: 1.99, unit: "EUR" }
