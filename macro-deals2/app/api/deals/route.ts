@@ -16,7 +16,7 @@ export async function GET(req: Request) {
   const zip = searchParams.get("zip") || "10115";
   const stores = (searchParams.get("stores") || "rewe,lidl,aldi,edeka,kaufland")
     .split(",")
-    .map(s => s.trim().toLowerCase())
+    .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
 
   const noCache = ["1", "true"].includes(
@@ -51,8 +51,12 @@ export async function GET(req: Request) {
   });
 
   const settled = await Promise.allSettled(tasks);
-  const deals = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+  const deals = settled.flatMap((r) =>
+    r.status === "fulfilled" ? r.value : []
+  );
 
-  if (!noCache) setCache(cacheKey, deals, 1000 * 60 * 2); // 2 min cache while testing
+  // cache 2 minutes while testing
+  if (!noCache) setCache(cacheKey, deals, 1000 * 60 * 2);
+
   return NextResponse.json({ zip, stores, deals, cached: false });
 }
