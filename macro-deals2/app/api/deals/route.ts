@@ -1,66 +1,48 @@
 import { NextResponse } from "next/server";
-import { getCache, setCache } from "../../../lib/cache";
+import { dbGetJSON } from "../../../lib/db";
 import type { Deal } from "../../../lib/types";
-import { fetchRewe } from "../../../lib/fetchers/rewe";
-import { fetchLidl } from "../../../lib/fetchers/lidl";
-import { fetchAldi } from "../../../lib/fetchers/aldi";
-import { fetchEdeka } from "../../../lib/fetchers/edeka";
-import { fetchKaufland } from "../../../lib/fetchers/kaufland";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function getKaufland(zip: string, useLive: boolean) {
-  const key = `deals:${zip}:kaufland`;
-  if (!useLive) {
-    const cached = getCache<Deal[]>(key);
-    if (cached && cached.length) return cached;
-  }
-  const deals = await fetchKaufland(zip); // may use Playwright fallback internally
-  setCache(key, deals, 1000 * 60 * 60);   // 1h
-  return deals;
-}
+type CacheEnvelope = { zip: string; store: string; deals: Deal[]; ts: number };
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-
   const zip = searchParams.get("zip") || "10115";
   const stores = (searchParams.get("stores") || "rewe,lidl,aldi,edeka,kaufland")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
+    .split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
 
-  const noCache = ["1", "true"].includes(
-    (searchParams.get("nocache") || "").toLowerCase()
-  );
+  const results: Deal[] = [];
+  const found: string[] = [];
+  const missing: string[] = [];
 
-  const cacheKey = `deals:${zip}:${stores.sort().join(",")}`;
-  if (!noCache) {
-    const cached = getCache<Deal[]>(cacheKey);
-    if (cached) return NextResponse.json({ zip, stores, deals: cached, cached: true });
+  for (const s of stores) {
+    const key = `deals:${s}:${zip}`;
+    const env = await dbGetJSON<CacheEnvelope>(key);
+    if (env && Array.isArray(env.deals) && env.deals.length) {
+      results.push(...env.deals);
+      found.push(s);
+    } else {
+      missing.push(s);
+    }
   }
 
-  const fetchers: Record<string, (z: string) => Promise<Deal[]>> = {
-    rewe: fetchRewe,
-    lidl: fetchLidl,
-    aldi: fetchAldi,
-    edeka: fetchEdeka,
-    // Serve cached Kaufland by default so it’s instant; live only if forced
-    kaufland: (z: string) => getKaufland(z, /*useLive*/ false),
-  };
-
-  const tasks = stores.map(async (s) => {
-    const fn = fetchers[s];
-    if (!fn) return [] as Deal[];
-    try { return await fn(zip); } catch (err) {
-      console.error(`[deals] ${s} error`, err);
-      return [] as Deal[];
+  // lightweight stub for any missing store so UI never hangs
+  for (const s of missing) {
+    if (s === "kaufland") {
+      results.push(
+        { id: `kaufland-stub-1-${zip}`, store: "kaufland", title: "K-Butter 250g", price: 1.79, unit: "EUR" },
+        { id: `kaufland-stub-2-${zip}`, store: "kaufland", title: "Apfel 1kg",     price: 1.99, unit: "EUR" },
+      );
     }
+  }
+
+  return NextResponse.json({
+    zip,
+    stores,
+    deals: results,
+    cachedStores: found,
+    missingStores: missing,
   });
-
-  const settled = await Promise.allSettled(tasks);
-  const deals = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
-
-  if (!noCache) setCache(cacheKey, deals, 1000 * 60 * 2); // 2 min page cache (testing)
-  return NextResponse.json({ zip, stores, deals, cached: false });
 }
