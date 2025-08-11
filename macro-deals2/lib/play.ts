@@ -1,8 +1,8 @@
 // lib/play.ts
 export async function getHtmlWithPlaywright(url: string): Promise<string> {
-  const { chromium } = await import("playwright"); // dynamic import to keep cold starts smaller
+  const { chromium } = await import("playwright");
   const browser = await chromium.launch({
-    args: ["--no-sandbox","--disable-setuid-sandbox"],
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
     headless: true,
   });
   try {
@@ -12,14 +12,14 @@ export async function getHtmlWithPlaywright(url: string): Promise<string> {
       locale: "de-DE",
     });
     const page = await ctx.newPage();
-    // hit homepage first to set cookies, then go to deals
     await page.goto("https://www.kaufland.de/", { waitUntil: "domcontentloaded", timeout: 60000 });
-    // accept cookie banner if present
-    try { await page.getByRole("button", { name: /akzeptieren|zustimmen|alle akzeptieren/i }).click({ timeout: 4000 }); } catch {}
-    // now go to target
+    // Try to accept cookie banner if visible
+    try {
+      const btn = await page.getByRole("button", { name: /akzeptieren|zustimmen|alle akzeptieren/i });
+      await btn.click({ timeout: 3000 });
+    } catch {}
     await page.goto(url, { waitUntil: "networkidle", timeout: 65000 });
-    const html = await page.content();
-    return html ?? "";
+    return await page.content();
   } catch {
     return "";
   } finally {
