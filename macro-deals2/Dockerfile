@@ -1,11 +1,12 @@
-# Use Playwright image with all Chromium deps preinstalled
+# Playwright image has Chromium + deps preinstalled
 FROM mcr.microsoft.com/playwright:v1.45.0-jammy
 
 WORKDIR /app
 
 # Copy package files and install deps
-COPY package*.json ./
-RUN npm ci
+# If you have package-lock.json, you can COPY it too, but not required.
+COPY package.json ./
+RUN npm install --no-audit --no-fund
 
 # Copy the rest of the app
 COPY . .
@@ -16,7 +17,6 @@ RUN npm run build
 
 # Runtime
 ENV NODE_ENV=production
-# Render provides PORT; Next.js uses it if set
 ENV PORT=10000
 EXPOSE 10000
 
